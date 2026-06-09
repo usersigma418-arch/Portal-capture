@@ -3,7 +3,7 @@ import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
 
-// Load variables from your local .env file
+// Load variables from a local .env file during local testing
 dotenv.config();
 
 const app = express();
@@ -20,37 +20,34 @@ const TRANSPARENT_PIXEL = Buffer.from(
   'base64'
 );
 
-// Listen for the image loading trigger from Device A's bookmarklet
+// Listen for the data payloads coming from your browser tracking pixel
 app.get('/log.png', async (req, res) => {
-  
-  // STEP 1: Immediately return the 1x1 image to keep the browser happy
-  res.writeHead(200, {
-    'Content-Type': 'image/gif',
-    'Content-Length': TRANSPARENT_PIXEL.length,
-    'Cache-Control': 'no-store, no-cache, must-revalidate, private'
-  });
-  res.end(TRANSPARENT_PIXEL);
-
-  // STEP 2: Extract the hidden query text attached to the image link
   const encryptedData = req.query.data;
-  if (!encryptedData) return;
+
+  // If no payload is present, return the pixel immediately and stop execution
+  if (!encryptedData) {
+    res.writeHead(200, { 'Content-Type': 'image/gif' });
+    return res.end(TRANSPARENT_PIXEL);
+  }
 
   try {
-    // Decode the data back into readable text
+    // Decode the URL-encoded data back into readable text
     const extractedText = decodeURIComponent(encryptedData);
     console.log("--- Extracted Screen Text ---");
     console.log(extractedText);
 
-    // STEP 3: Pass the text to Gemini to find the question and generate the answer
+    // STEP 1: Send the text content to the Gemini API for academic analysis
+    console.log("🤖 Forwarding payload to Gemini...");
     const aiResponse = await ai.models.generateContent({
-      model: 'gemini-2.5-flash', // Fast and accurate model for parsing questions
-      contents: `You are an assistant reading a student's screen content during a quiz. Find the exam question or problem in the following text, solve it, and output ONLY the direct, clear answer or multiple-choice letter option (A, B, C, D). Keep it extremely short:\n\n${extractedText}`,
+      model: 'gemini-2.5-flash', 
+      contents: `You are an academic assistant. Analyze the text provided, extract the core question or structural content, and provide a direct, concise step-by-step solution or summary of the problem:\n\n${extractedText}`,
     });
 
     const geminiAnswer = aiResponse.text;
     console.log(`Gemini Solution: ${geminiAnswer}`);
 
-    // STEP 4: Push the solution directly to your Telegram Bot (Device B)
+    // STEP 2: Construct the webhook request to push the solution directly to Telegram
+    console.log("📤 Pushing notification to Telegram...");
     const telegramApiUrl = `https://api.telegram.com/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
     
     await fetch(telegramApiUrl, {
@@ -58,15 +55,25 @@ app.get('/log.png', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: `🎯 Gemini Answer:\n${geminiAnswer}`
+        text: `🎯 Gemini Analysis:\n${geminiAnswer}`
       })
     });
 
-    console.log("Answer pushed to Telegram successfully.");
+    console.log("✅ Loop completed successfully. Notification delivered.");
 
   } catch (error) {
-    console.error("Error processing payload with Gemini:", error.message);
+    // Captures API errors, authentication issues, or network dropouts
+    console.error("💥 Error processing payload:", error.message);
   }
+
+  // STEP 3: Finally resolve the HTTP connection by sending the tracking image
+  // This layout forces cloud platforms to keep the execution environment awake during Steps 1 & 2
+  res.writeHead(200, {
+    'Content-Type': 'image/gif',
+    'Content-Length': TRANSPARENT_PIXEL.length,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+  });
+  res.end(TRANSPARENT_PIXEL);
 });
 
 app.listen(PORT, () => {
