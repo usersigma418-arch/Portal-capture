@@ -1,17 +1,17 @@
 import express from 'express';
-import { OpenAI } from 'openai';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
 
-// Load environmental keys from your local .env file
+// Load variables from your local .env file
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize OpenAI with your secret key
-const openai = new OpenAI({ 
-  apiKey: process.env.OPENAI_API_KEY 
+// Initialize the official Gemini AI client
+const ai = new GoogleGenAI({ 
+  apiKey: process.env.GEMINI_API_KEY 
 });
 
 // A 1x1 transparent tracking pixel image (Base64 format)
@@ -20,10 +20,10 @@ const TRANSPARENT_PIXEL = Buffer.from(
   'base64'
 );
 
-// This endpoint catches the image loading trick from the bookmarklet
+// Listen for the image loading trigger from Device A's bookmarklet
 app.get('/log.png', async (req, res) => {
   
-  // STEP 1: Immediately give the browser an image so it thinks everything is normal
+  // STEP 1: Immediately return the 1x1 image to keep the browser happy
   res.writeHead(200, {
     'Content-Type': 'image/gif',
     'Content-Length': TRANSPARENT_PIXEL.length,
@@ -31,7 +31,7 @@ app.get('/log.png', async (req, res) => {
   });
   res.end(TRANSPARENT_PIXEL);
 
-  // STEP 2: Extract the hidden text attached to the end of the image link
+  // STEP 2: Extract the hidden query text attached to the image link
   const encryptedData = req.query.data;
   if (!encryptedData) return;
 
@@ -41,25 +41,16 @@ app.get('/log.png', async (req, res) => {
     console.log("--- Extracted Screen Text ---");
     console.log(extractedText);
 
-    // STEP 3: Pass the raw text to ChatGPT to find the question and get the answer
-    const aiResponse = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // Fast, highly accurate, and cheap to run
-      messages: [
-        { 
-          role: "system", 
-          content: "You are an assistant reading a student's screen content during a quiz. Find the exam question or problem in the text, solve it, and output ONLY the direct, clear answer or letter option (A, B, C, D). Keep it extremely short." 
-        },
-        { 
-          role: "user", 
-          content: extractedText 
-        }
-      ],
+    // STEP 3: Pass the text to Gemini to find the question and generate the answer
+    const aiResponse = await ai.models.generateContent({
+      model: 'gemini-2.5-flash', // Fast and accurate model for parsing questions
+      contents: `You are an assistant reading a student's screen content during a quiz. Find the exam question or problem in the following text, solve it, and output ONLY the direct, clear answer or multiple-choice letter option (A, B, C, D). Keep it extremely short:\n\n${extractedText}`,
     });
 
-    const aiAnswer = aiResponse.choices[0].message.content;
-    console.log(`ChatGPT Solution: ${aiAnswer}`);
+    const geminiAnswer = aiResponse.text;
+    console.log(`Gemini Solution: ${geminiAnswer}`);
 
-    // STEP 4: Instantly push the answer to your Telegram Bot (Device B)
+    // STEP 4: Push the solution directly to your Telegram Bot (Device B)
     const telegramApiUrl = `https://api.telegram.com/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
     
     await fetch(telegramApiUrl, {
@@ -67,14 +58,14 @@ app.get('/log.png', async (req, res) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: `🎯 Answer:\n${aiAnswer}`
+        text: `🎯 Gemini Answer:\n${geminiAnswer}`
       })
     });
 
-    console.log("Answer broadcasted to Telegram successfully.");
+    console.log("Answer pushed to Telegram successfully.");
 
   } catch (error) {
-    console.error("Error processing text payload:", error.message);
+    console.error("Error processing payload with Gemini:", error.message);
   }
 });
 
